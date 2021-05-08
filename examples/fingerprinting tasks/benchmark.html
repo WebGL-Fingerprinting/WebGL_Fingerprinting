@@ -1,0 +1,864 @@
+<html>
+<head><title>webgl test</title>
+<meta http-equiv="Expires" content="0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Cache-control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Cache" content="no-cache">
+</head>
+<body>
+
+<!--
+PNG处理项目地址
+https://github.com/photopea/UPNG.js
+https://github.com/zholos/js_bitmap/blob/master/bitmap.js
+	http://althenia.net/notes/js_bitmap
+其他可用项：https://github.com/IjzerenHein/pnglib-es6
+-->
+
+<canvas id='myCanvas1' width='256' height='256'></canvas>
+<canvas id='myCanvas2' width='256' height='256'></canvas>
+<div id="res"></div>
+<script src="md5.js"></script>
+<script src="UPNG.js"></script>
+<script src="bitmap.js"></script>
+<script src="ua-parser.min.js"></script>
+
+<script>
+
+var x = document.cookie;
+if(x == ""){
+	let unique_id = getUuid();
+	document.cookie="id=" +getUuid() + "; expires=Thu, 18 Dec 2043 12:00:00 GMT; path=/";
+}
+
+function getUuid() {
+	var s = [];
+	var hexDigits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	for (var i = 0; i < 36; i++) {
+		s[i] = hexDigits.substr(Math.floor(Math.random() * 0x10), 1)
+	}
+	s[14] = "4"
+	s[19] = hexDigits.substr((s[19] & 0x3) | 0x8, 1)
+	s[8] = s[13] = s[18] = s[23] = "-"
+	let uuid = s.join("")
+	return uuid
+}
+
+
+
+function b64ToUint6 (nChr) {
+
+  return nChr > 64 && nChr < 91 ?
+      nChr - 65
+    : nChr > 96 && nChr < 123 ?
+      nChr - 71
+    : nChr > 47 && nChr < 58 ?
+      nChr + 4
+    : nChr === 43 ?
+      62
+    : nChr === 47 ?
+      63
+    :
+      0;
+
+}
+
+function base64DecToArr (sBase64, nBlockSize) {
+
+  var
+    sB64Enc = sBase64.replace(/[^A-Za-z0-9\+\/]/g, ""), nInLen = sB64Enc.length,
+    nOutLen = nBlockSize ? Math.ceil((nInLen * 3 + 1 >>> 2) / nBlockSize) * nBlockSize : nInLen * 3 + 1 >>> 2, aBytes = new Uint8Array(nOutLen);
+
+  for (var nMod3, nMod4, nUint24 = 0, nOutIdx = 0, nInIdx = 0; nInIdx < nInLen; nInIdx++) {
+    nMod4 = nInIdx & 3;
+    nUint24 |= b64ToUint6(sB64Enc.charCodeAt(nInIdx)) << 18 - 6 * nMod4;
+    if (nMod4 === 3 || nInLen - nInIdx === 1) {
+      for (nMod3 = 0; nMod3 < 3 && nOutIdx < nOutLen; nMod3++, nOutIdx++) {
+        aBytes[nOutIdx] = nUint24 >>> (16 >>> nMod3 & 24) & 255;
+      }
+      nUint24 = 0;
+    }
+  }
+
+  return aBytes;
+}
+
+function transformArrayBufferToBase64 (buffer) {
+    var binary = '';
+    var bytes = new Uint8Array(buffer);
+    for (var len = bytes.byteLength, i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+}
+
+const arrayBufferToBase64Img = (buffer) => {
+  const str = String.fromCharCode(...new Uint8Array(buffer));
+  return `data:image/png;base64,${window.btoa(str)}`;
+}
+
+</script>
+
+<script>
+function getRandom(num){
+	var list = [];
+	for(var i=0;i<num;i++){
+		e = (Math.random()*255).toFixed(6);
+		list.push(e);
+	}
+	var div = document.getElementById('res');
+	div.innerHTML = list;
+}
+//getRandom(5000);
+
+String.prototype.hashCode = function() {
+  var hash = 0, i, chr;
+  if (this.length === 0) return hash;
+  for (i = 0; i < this.length; i++) {
+	chr   = this.charCodeAt(i);
+	hash  = ((hash << 5) - hash) + chr;
+	hash |= 0; // Convert to 32bit integer
+  }
+  return hash;
+};
+
+function attack_blend(gl, p){
+	// 238 ~ 239, 237/255=0.929411, 240/255=0.941176
+	let left = 0, right = 9999999;
+	let mid;
+	let count = 1, size = 1;
+	let pixel = new Uint8Array(size*size*4);
+	while(left + 1 < right){
+		mid = Math.round((right + left)/2);
+
+		gl.blendColor(left/10000000, right/10000000, mid/10000000, 1.0);	//设置混合颜色CONSTANT_COLOR
+
+		//dfactor设为0，则不会考虑背景的颜色
+		gl.blendFunc(gl.CONSTANT_COLOR, gl.ZERO);
+		//color(RGBA) = (sourceColor * sfactor) + (destinationColor * dfactor). RBGA 值在 0 到1 之间.
+
+		gl.drawArrays(gl.POINTS, 0, 1);
+
+		//clearColor和clear具有区分能力，在笔记本、台式机和手机中表现均不相同
+		//gl.clearColor(left/1000000, right/1000000, mid/1000000, 1.0);
+		//gl.clear(gl.COLOR_BUFFER_BIT);
+
+		gl.readPixels(128, 127, size, size, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+		if(pixel[2] <= p){
+			left = mid;
+		}else if(pixel[2] >= p+1){
+			right = mid;
+		}
+	}
+	return left;
+}
+
+function attack_clear(gl, p){
+	// 238 ~ 239, 237/255=0.929411, 240/255=0.941176
+	let left = 0, right = 9999999;
+	let mid;
+	let count = 1, size = 1;
+	let pixel = new Uint8Array(size*size*4);
+	while(left + 1 < right){
+		mid = Math.round((right + left)/2);
+
+		gl.clearColor(left/10000000, right/10000000, mid/10000000, 1.0);	//设置混合颜色CONSTANT_COLOR
+		gl.clear(gl.COLOR_BUFFER_BIT);
+
+		gl.readPixels(128, 127, size, size, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+		if(pixel[2] <= p){
+			left = mid;
+		}else if(pixel[2] >= p+1){
+			right = mid;
+		}
+	}
+	return left;
+}
+
+</script>
+
+<script>
+
+function createShader(gl, type, source) {
+		  var shader = gl.createShader(type);
+		  gl.shaderSource(shader, source);
+		  gl.compileShader(shader);
+		  var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+		  if (success) {
+			return shader;
+		  }
+
+		  console.log(gl.getShaderInfoLog(shader));  // eslint-disable-line
+		  gl.deleteShader(shader);
+		  return undefined;
+		}
+
+function createProgram(gl, vertexShader, fragmentShader) {
+  var program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  var success = gl.getProgramParameter(program, gl.LINK_STATUS);
+  if (success) {
+	return program;
+  }
+
+  console.log(gl.getProgramInfoLog(program));  // eslint-disable-line
+  gl.deleteProgram(program);
+  return undefined;
+}
+
+	// 设置矩形
+function setRectangle(gl, x, y, width, height) {
+	var x1 = x;
+	var x2 = x + width;
+	var y1 = y;
+	var y2 = y + height;
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+		x1, y1,
+		x2, y1,
+		x1, y2,
+		x1, y2,
+		x2, y1,
+		x2, y2,
+	]), gl.STATIC_DRAW);
+}
+
+function resizeCanvasToDisplaySize(canvas, multiplier) {
+    multiplier = multiplier || 1;
+    var width  = canvas.clientWidth  * multiplier | 0;
+    var height = canvas.clientHeight * multiplier | 0;
+    if (canvas.width !== width ||  canvas.height !== height) {
+      canvas.width  = width;
+      canvas.height = height;
+      return true;
+    }
+    return false;
+}	
+
+
+function canvas_attack(img){
+	let myC = document.getElementById('myCanvas1');
+	let gl = myC.getContext('webgl');
+
+	let vertexShader = gl.createShader(gl.VERTEX_SHADER);
+	let fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+	
+	let vsText = `
+		//	顶点着色器程序
+		attribute vec2 a_position;
+		attribute vec2 a_texCoord;
+
+		uniform vec2 u_resolution;
+
+		varying vec2 v_texCoord;
+
+		void main() {
+		   // 从像素坐标转换到 0.0 到 1.0
+		   vec2 zeroToOne = a_position / u_resolution;
+
+		   // 再把 0->1 转换 0->2
+		   vec2 zeroToTwo = zeroToOne * 2.0;
+
+		   // 把 0->2 转换到 -1->+1 (裁剪空间)
+		   vec2 clipSpace = zeroToTwo - 1.0;
+
+		   gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+
+		   // 将纹理坐标传给片断着色器
+		   // GPU会在点之间进行插值
+		   v_texCoord = a_texCoord;
+		}
+	`
+	let fsText = `
+		//片段着色器程序
+		precision mediump float;
+		// 纹理
+		uniform sampler2D u_image;
+		// 从顶点着色器传入的纹理坐标
+		varying vec2 v_texCoord;
+		void main() {
+			// 在纹理上寻找对应颜色值
+		   gl_FragColor = texture2D(u_image, v_texCoord);
+		}
+	`
+
+	
+	gl.shaderSource(vertexShader, vsText);
+	gl.shaderSource(fragmentShader, fsText);
+
+	gl.compileShader(vertexShader);
+	gl.compileShader(fragmentShader);
+	if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+		console.error('ERROR compiling vertex shader!',
+		gl.getShaderInfoLog(vertexShader));
+	}
+
+	let program = gl.createProgram();
+	gl.attachShader(program, vertexShader);
+	gl.attachShader(program, fragmentShader);
+	gl.linkProgram(program);
+	gl.validateProgram(program);
+
+	
+	// 指定从哪获取顶点数据
+	let positionLocation = gl.getAttribLocation(program, "a_position");
+	let texcoordLocation = gl.getAttribLocation(program, "a_texCoord");
+
+	// 创建缓冲区存放剪辑空间坐标
+	let positionBuffer = gl.createBuffer();
+
+	// 绑定顶点与缓冲区
+	gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+	// 设置和图片大小相同的矩形
+	setRectangle(gl, 0, 0, img.width, img.height);
+
+	// 为矩形提供纹理坐标
+	let texcoordBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+		0.0, 0.0,
+		1.0, 0.0,
+		0.0, 1.0,
+		0.0, 1.0,
+		1.0, 0.0,
+		1.0, 1.0,
+	]), gl.STATIC_DRAW);
+
+	// 创建纹理
+	let texture = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, texture);
+
+	// 将图片上传到纹理中
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+
+	// 设置参数，以便渲染任意大小的图片
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+	gl.generateMipmap(gl.TEXTURE_2D);	//当图片大小不是2^n时会报错
+
+	// 指定从哪获取uniform
+	let resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+
+	resizeCanvasToDisplaySize(gl.canvas);
+
+	// 告诉WebGL如何从剪辑空间转换为像素
+	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+	// 清空canvas
+	gl.clearColor(0, 0, 0, 0);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+
+	// 使用着色器程序
+	gl.useProgram(program);
+
+	// 开启position属性
+	gl.enableVertexAttribArray(positionLocation);
+
+	// 将position属性与缓存区绑定
+	gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+	// 告诉position属性如何从positionBuffer中获取数据
+	let size = 2; // 每次迭代提取两个数据
+	let type = gl.FLOAT; // 数据是 32bit 浮点型数据
+	let normalize = false; // 不规范化数据
+	let stride = 0; // 每次读取数据跳过0个数据
+	let offset = 0; // 从缓存区的第0个数据开始读取
+	gl.vertexAttribPointer(
+		positionLocation, size, type, normalize, stride, offset);
+
+	// 开启texcord 属性
+	gl.enableVertexAttribArray(texcoordLocation);
+
+	// 将texcord属性与缓冲区绑定
+	gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+
+	// 告诉position属性如何从positionBuffer中获取数据
+	let mySize = 2; // 每次迭代提取两个数据
+	let mytype = gl.FLOAT; // 数据是 32bit 浮点型数据
+	let mynormalize = false; // 不规范化数据
+	let mystride = 0; // 每次读取数据跳过0个数据
+	let myoffset = 0; // 从缓存区的第0个数据开始读取
+	gl.vertexAttribPointer(
+		texcoordLocation, mySize, mytype, mynormalize, mystride, myoffset);
+
+	// 设置分辨率
+	gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
+
+	// gl.drawArrays是个异步操作，绘画结束之前取值会出现问题。
+	gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+	let dataurl = gl.canvas.toDataURL();
+	return md5(dataurl);
+}
+
+function canvas_defense(img){
+	let myC = document.getElementById('myCanvas2');
+	let gl = myC.getContext('webgl', { preserveDrawingBuffer: true, premultipliedAlpha:true});
+
+	console.log('premultipliedAlpha:false');
+
+	let vertexShader = gl.createShader(gl.VERTEX_SHADER);
+	let fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+
+	let vsText = `
+		//	顶点着色器程序
+		attribute vec2 a_position;
+		attribute vec2 a_texCoord;
+
+		uniform vec2 u_resolution;
+
+		varying vec2 v_texCoord;
+
+		void main() {
+		   // 从像素坐标转换到 0.0 到 1.0
+		   vec2 zeroToOne = a_position / u_resolution;
+
+		   // 再把 0->1 转换 0->2
+		   vec2 zeroToTwo = zeroToOne * 2.0;
+
+		   // 把 0->2 转换到 -1->+1 (裁剪空间)
+		   vec2 clipSpace = zeroToTwo - 1.0;
+
+		   gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+
+		   // 将纹理坐标传给片断着色器
+		   // GPU会在点之间进行插值
+		   v_texCoord = a_texCoord;
+		}
+	`
+	let fsText = `
+		//片段着色器程序
+		precision mediump float;
+		// 纹理
+		uniform sampler2D u_image;
+		// 从顶点着色器传入的纹理坐标
+		varying vec2 v_texCoord;
+
+		uniform int gcd[256];
+		
+		bool check(int C, int A){
+			float res = float(C)*255.0/float(A);
+			res = fract(res);
+			
+			if(res<0.4 || res>0.6)
+				return true;
+			return false;
+		}
+		
+		
+		int myAbs(int a){
+			if(a>0)
+				return a;
+			return -1*a;
+		}
+		
+		int getDis(int A, int B){
+			if(A>B)
+				return A-B;
+			return B-A;
+		}
+		
+		int getMin(int A, int B){
+			if(A<B)
+				return A;
+			return B;
+		}
+		
+		//强策略
+		vec4 opt(int R, int G, int B, int A){
+			if(A==0)
+				return vec4(0.0, 0.0, 0.0, 0.0);
+			if(A == 255)
+				return vec4(float(R)/255.0, float(G)/255.0, float(B)/255.0, float(A)/255.0);
+		
+			//判断RGB是否大于A
+			bool flag_R = R<A;
+			bool flag_G = G<A;
+			bool flag_B = B<A;
+		
+			R = R<A? R: A;
+			G = G<A? G: A;
+			B = B<A? B: A;
+		
+			int tmp, n, d1=0, d2=0, d3=0, min=255*4;
+		
+			int best_r=255, best_g=255, best_b=255, best_a=255, best_tmp=255;
+			int current_r, current_g, current_b, current_a;
+			int myDis;
+		
+			//找到合适的a值
+			for(int a=1;a<=255;a++){
+				if(getDis(A, a) > 6)
+					continue;
+				
+				tmp = gcd[a];
+				if(flag_R){
+					n = R/tmp;
+					myDis = getMin(getDis(n*tmp, R), getDis((n+1)*tmp, R) );
+					d1 = myDis * myDis;
+				}
+				if(d1>min)
+					continue;
+				
+				if(flag_G){
+					n = G/tmp;
+					myDis = getMin(getDis(n*tmp, G), getDis((n+1)*tmp, G) );
+					d2 = myDis * myDis;
+				}
+				if(d1+d2>min)
+					continue;
+			
+				if(flag_B){
+					n = B/tmp;
+					myDis = getMin(getDis(n*tmp, B), getDis((n+1)*tmp, B) );
+					d3 = myDis * myDis;
+				}
+				if(d1+d2+d3>min)
+					continue;
+				if(d1+d2+d3<min){
+					min = d1+d2+d3;
+					best_a = a;
+					best_tmp = tmp;
+				}else if(d1+d2+d3 == min){
+					if(getDis(A, a) < getDis(A, best_a)){
+						best_a = a;
+						best_tmp = tmp;
+					}
+				}
+		
+			}
+		
+		
+			//修改R
+			if(flag_R){
+				n = R/best_tmp;
+				if(getDis(n*best_tmp, R) < getDis((n+1)*best_tmp, R)){
+					best_r = n*best_tmp;
+				}else{
+					best_r = (n+1)*best_tmp;
+				}
+			}else{
+				best_r = best_a;
+			}
+		
+			//修改G
+			if(flag_G){
+				n = G/best_tmp;
+				if(getDis(n*best_tmp, G) < getDis((n+1)*best_tmp, G)){
+					best_g = n*best_tmp;
+				}else{
+					best_g = (n+1)*best_tmp;
+				}
+			}else{
+				best_g = best_a;
+			}
+		
+			//修改B
+			if(flag_B){
+				n = B/best_tmp;
+				if(getDis(n*best_tmp, B) < getDis((n+1)*best_tmp, B)){
+					best_b = n*best_tmp;
+				}else{
+					best_b = (n+1)*best_tmp;
+				}
+			}else{
+				best_b = best_a;
+			}
+
+			if(best_r > best_a)
+				best_r = best_a;
+			if(best_g > best_a)
+				best_g = best_a;
+			if(best_b > best_a)
+				best_b = best_a;
+
+			return vec4(float(best_r)/255.0, float(best_g)/255.0, float(best_b)/255.0, float(best_a)/255.0);
+		}
+
+
+		void main() {
+			// 在纹理上寻找对应颜色值
+		   gl_FragColor = texture2D(u_image, v_texCoord);
+		   //gl_FragColor = vec4(0, 0, 0, 1.0);
+		   int R = int(floor(gl_FragColor.x * 255.0 + 0.1));
+		   int G = int(floor(gl_FragColor.y * 255.0 + 0.1));
+		   int B = int(floor(gl_FragColor.z * 255.0 + 0.1));
+		   int A = int(floor(gl_FragColor.w * 255.0 + 0.1));
+
+		   gl_FragColor = vec4(float(R)/255.0, float(G)/255.0, float(B)/255.0, float(A)/255.0);
+
+			/*
+			R = 97;
+			G = 119;
+			B = 125;
+			A = 126;
+			*/
+
+		   gl_FragColor = opt(R, G, B, A);
+		}
+	`
+
+	gl.shaderSource(vertexShader, vsText);
+	gl.shaderSource(fragmentShader, fsText);
+
+	gl.compileShader(vertexShader);
+	gl.compileShader(fragmentShader);
+	if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+		alert('ERROR compiling vertex shader!');
+	}
+
+	if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+		alert('ERROR compiling fragment shader!');
+	}
+
+	let program = gl.createProgram();
+	gl.attachShader(program, vertexShader);
+	gl.attachShader(program, fragmentShader);
+	gl.linkProgram(program);
+
+	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+		alert('ERROR linking program!');
+	}
+
+	gl.validateProgram(program);
+	if (!gl.getProgramParameter(program, gl.VALIDATE_STATUS)) {
+		alert('ERROR validating program!');
+	}
+	
+	// 指定从哪获取顶点数据
+	let positionLocation = gl.getAttribLocation(program, "a_position");
+	let texcoordLocation = gl.getAttribLocation(program, "a_texCoord");
+
+	// 创建缓冲区存放剪辑空间坐标
+	let positionBuffer = gl.createBuffer();
+
+	// 绑定顶点与缓冲区
+	gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+	// 设置和图片大小相同的矩形
+	setRectangle(gl, 0, 0, img.width, img.height);
+
+	// 为矩形提供纹理坐标
+	let texcoordBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+		0.0, 0.0,
+		1.0, 0.0,
+		0.0, 1.0,
+		0.0, 1.0,
+		1.0, 0.0,
+		1.0, 1.0,
+	]), gl.STATIC_DRAW);
+
+	// 创建纹理
+	let texture = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, texture);
+
+	// 将图片上传到纹理中
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+
+	// 设置参数，以便渲染任意大小的图片
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+	gl.generateMipmap(gl.TEXTURE_2D);	//当图片大小不是2^n时会报错
+
+	// 指定从哪获取uniform
+	let resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+
+	resizeCanvasToDisplaySize(gl.canvas);
+
+	// 告诉WebGL如何从剪辑空间转换为像素
+	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+	// 清空canvas
+	gl.clearColor(0, 0, 0, 0);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+
+	// 使用着色器程序
+	gl.useProgram(program);
+
+	// 开启position属性
+	gl.enableVertexAttribArray(positionLocation);
+
+	// 将position属性与缓存区绑定
+	gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+	// 告诉position属性如何从positionBuffer中获取数据
+	let size = 2; // 每次迭代提取两个数据
+	let type = gl.FLOAT; // 数据是 32bit 浮点型数据
+	let normalize = false; // 不规范化数据
+	let stride = 0; // 每次读取数据跳过0个数据
+	let offset = 0; // 从缓存区的第0个数据开始读取
+	gl.vertexAttribPointer(
+		positionLocation, size, type, normalize, stride, offset);
+
+	// 开启texcord 属性
+	gl.enableVertexAttribArray(texcoordLocation);
+
+	// 将texcord属性与缓冲区绑定
+	gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+
+	// 告诉position属性如何从positionBuffer中获取数据
+	let mySize = 2; // 每次迭代提取两个数据
+	let mytype = gl.FLOAT; // 数据是 32bit 浮点型数据
+	let mynormalize = false; // 不规范化数据
+	let mystride = 0; // 每次读取数据跳过0个数据
+	let myoffset = 0; // 从缓存区的第0个数据开始读取
+	gl.vertexAttribPointer(
+		texcoordLocation, mySize, mytype, mynormalize, mystride, myoffset);
+
+	// 设置分辨率
+	gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
+
+	var gcd = gl.getUniformLocation(program, "gcd");
+	//y[n]表示A=n, n/gcd(n,255)
+	var y = [0,1,2,1,4,1,2,7,8,3,2,11,4,13,14,1,16,1,6,19,4,7,22,23,8,5,26,9,28,29,2,31,32,11,2,7,12,37,38,13,8,41,14,43,44,3,46,47,16,49,10,1,52,53,18,11,56,19,58,59,4,61,62,21,64,13,22,67,4,23,14,71,24,73,74,5,76,77,26,79,16,27,82,83,28,1,86,29,88,89,6,91,92,31,94,19,32,97,98,33,20,101,2,103,104,7,106,107,36,109,22,37,112,113,38,23,116,39,118,7,8,121,122,41,124,25,42,127,128,43,26,131,44,133,134,9,8,137,46,139,28,47,142,143,48,29,146,49,148,149,10,151,152,3,154,31,52,157,158,53,32,161,54,163,164,11,166,167,56,169,2,57,172,173,58,35,176,59,178,179,12,181,182,61,184,37,62,11,188,63,38,191,64,193,194,13,196,197,66,199,40,67,202,203,4,41,206,69,208,209,14,211,212,71,214,43,72,217,218,73,44,13,74,223,224,15,226,227,76,229,46,77,232,233,78,47,236,79,14,239,16,241,242,81,244,49,82,247,248,83,50,251,84,253,254,1];
+	gl.uniform1iv(gcd, y);
+
+	// gl.drawArrays是个异步操作，绘画结束之前取值会出现问题。
+	gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+	let dataurl = gl.canvas.toDataURL();
+
+	dataurl = dataurl.substring(22);
+//	console.log('dataurl: ', dataurl);
+
+	let myArray = base64DecToArr(dataurl);
+	let png = UPNG.decode(myArray);
+
+	//console.log(png);
+	// UPNG.toRGBA8 returns array of frames, size: width * height * 4 bytes.
+	var rgba = UPNG.toRGBA8(png)[0];
+
+	rgba = new Uint8Array(rgba);
+	//console.log(rgba[0], rgba[1], rgba[2], rgba[3]);
+
+	let bmp = new Bitmap(png.width, png.height);
+
+	for(let x=0;x<png.width;x++)
+		for(let y=0;y<png.height;y++){
+			let index = (x*png.width + y)*4;
+			bmp.pixel[x][y] = [rgba[index]/255, rgba[index+1]/255, rgba[index+2]/255, rgba[index+3]/255];
+	}
+
+	let url = bmp.dataURL();
+	return md5(url);
+}
+
+
+var vertexShaderSource = `
+void main() {
+	gl_Position = vec4(0, 0, 0, 1.0);
+	gl_PointSize = 20.0;
+}
+`
+	
+	
+var fragmentShaderSource = `
+precision mediump float;
+
+void main() {
+	gl_FragColor = vec4(254.0/255.0, 254.0/255.0, 254.0/255.0, 1.0);
+}
+`                            
+	
+var canvas = document.getElementById("myCanvas1");
+var gl = canvas.getContext('webgl',{ antialias: false, depth: false });
+
+if (!gl) {
+	console.log('can not use webgl');
+}
+
+
+var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+var render = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+console.log( vendor );
+console.log( render );
+
+// create GLSL shaders, upload the GLSL source, compile the shaders
+var vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+var fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+// Link the two shaders into a program
+var program = createProgram(gl, vertexShader, fragmentShader);
+
+gl.useProgram(program);
+
+//用纯白色清空画布
+gl.clearColor(1.0, 1.0, 1.0, 1.0);
+gl.clear(gl.COLOR_BUFFER_BIT);
+
+
+
+var res = "";
+var clearRes = [];
+var blendRes = [];
+
+var beginTime = +new Date();
+
+var img = new Image();
+var dataurl = "";
+img.src = '3d.png';
+img.onload = function(){
+	var x = [13, 15, 17, 20, 39, 41, 50, 54, 59, 79, 83, 87, 105, 133, 139, 140, 147, 156, 182, 200, 206, 209, 222, 226, 231];
+	var y = [1, 17, 19, 54, 57, 58, 61, 68, 80, 87, 91, 102, 111, 127, 134, 142, 162, 164, 179, 193, 194, 209, 234, 238, 248];
+	var beginTime = +new Date();
+
+	gl.enable(gl.BLEND);
+
+	for(let i=0;i<25;i++){
+		blendRes.push(attack_blend(gl, x[i]));
+		clearRes.push(attack_clear(gl, y[i]));
+	}
+
+	gl.disable(gl.BLEND);
+
+	dataurl = canvas_attack(img);
+	dataurl_defense = canvas_defense(img);
+
+	var endTime = +new Date();
+	console.log("time: ", (endTime-beginTime), " ms");
+
+	var hash = md5(blendRes.join('_') + clearRes.join('_') + dataurl); // "2063c1608d6e0baf80249c42e2be5804"
+	console.log('dataurl: ', dataurl);
+	console.log('defense_dataurl: ', dataurl_defense);
+	console.log('md5: ', hash);
+
+
+
+var xhttp = new XMLHttpRequest();
+var url = "upload.php";
+var data = [dataurl, dataurl_defense, vendor, render];
+data = data.concat(blendRes);
+data = data.concat(clearRes);
+
+var parser = new UAParser();
+var result = parser.getResult();
+//console.log(parser.getResult());
+console.log(result.browser.name);
+//console.log(result.ua);
+
+url = url + '?data=' + document.cookie + ';' + hash + ';'+result.browser.name+';'+data.join(';')+ result.ua;
+xhttp.open("GET", url, true);
+xhttp.send();
+
+//gl.clearColor(1.0, 0, 0, 1.0);
+//gl.clear(gl.COLOR_BUFFER_BIT);
+let res = document.getElementById('res');
+res.innerHTML = 'Your fingerprint: ' + md5(blendRes.join('_') + clearRes.join('_') + dataurl) + '<br>'
+res.innerHTML += 'Modified version: ' + md5(dataurl_defense);
+}
+
+
+
+</script>
+	
+</body>
+</html>
