@@ -1,0 +1,31 @@
+{
+   "browser_action": {
+      "default_icon": {
+         "16": "icons/16.png",
+         "32": "icons/32.png",
+         "48": "icons/48.png",
+         "64": "icons/64.png"
+      },
+      "default_popup": "popup.html",
+      "default_title": "For CCS 2021"
+   },
+   "content_scripts": [ {
+      "all_frames": true,
+      "js": [ "script/inject.js"],
+      "match_about_blank": true,
+      "matches": [ "*://*/*" ],
+      "run_at": "document_start"
+   } ],
+   "description": "source code.",
+   "icons": {
+      "128": "icons/128.png",
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "64": "icons/64.png"
+   },
+   "manifest_version": 2,
+   "name": "my extension",
+   "permissions": [ "storage", "contextMenus", "notifications" ],
+   "version": "1.0"
+}
